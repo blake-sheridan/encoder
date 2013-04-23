@@ -50,14 +50,14 @@ static PyObject* encode(Encoder *self, PyObject *o);
 static PyObject* encode_bytes(Encoder *self, PyObject *o);
 
 static int _append(Encoder *self, PyObject *o);
-static int _append_int(Encoder *self, PyObject *o);
-static int _append_float(Encoder *self, PyObject *o);
-static int _append_str(Encoder *self, PyObject *o);
-static int _append_bytes(Encoder *self, PyObject *o);
-static int _append_fast_sequence(Encoder *self, PyObject *o);
+Py_LOCAL_INLINE(int) _append_int(Encoder *self, PyObject *o);
+Py_LOCAL_INLINE(int) _append_float(Encoder *self, PyObject *o);
+Py_LOCAL_INLINE(int) _append_str(Encoder *self, PyObject *o);
+Py_LOCAL_INLINE(int) _append_bytes(Encoder *self, PyObject *o);
+Py_LOCAL_INLINE(int) _append_fast_sequence(Encoder *self, PyObject *o);
 
-static int _populate_bytes_constant(Encoder *self, PyObject **member, char *name);
-static int _populate_string_escapes(Encoder *self);
+Py_LOCAL_INLINE(int) _populate_bytes_constant(Encoder *self, PyObject **member, char *name);
+Py_LOCAL_INLINE(int) _populate_string_escapes(Encoder *self);
 
 static int _resize(Encoder *self);
 
@@ -180,7 +180,7 @@ _append(Encoder *self, PyObject *o)
     return -1;
 }
 
-static int
+Py_LOCAL_INLINE(int)
 _append_int(Encoder *self, PyObject *integer)
 {
     long long as_long = PyLong_AS_LONG(integer);
@@ -201,7 +201,7 @@ _append_int(Encoder *self, PyObject *integer)
     return 0;
 }
 
-static int
+Py_LOCAL_INLINE(int)
 _append_float(Encoder *self, PyObject *f)
 {
     double as_double = PyFloat_AS_DOUBLE(f);
@@ -224,7 +224,104 @@ _append_float(Encoder *self, PyObject *f)
     return 0;
 }
 
-static int
+Py_LOCAL_INLINE(int)
+_append_str(Encoder *self, PyObject *s)
+{
+    if (PyUnicode_READY(s) == -1) {
+        return -1;
+    }
+
+    Py_ssize_t length = PyUnicode_GET_LENGTH(s);
+
+    if (length == 0) {
+        return _write_const(self, "\"\"");
+    }
+
+    if (self->string_escapes == NULL) {
+        if (_populate_string_escapes(self) == -1) {
+            return -1;
+        }
+    }
+
+    WRITE_CHAR('"');
+
+    int i;
+    int kind = PyUnicode_KIND(s);
+
+    switch (kind) {
+    case PyUnicode_1BYTE_KIND: {
+        Py_UCS1 *data = PyUnicode_1BYTE_DATA(s);
+
+        for (i = 0; i < length; i++) {
+            /* TODO: map string_escapes */
+            _write_char(self, data[i]);
+        }
+        break;
+    }
+    case PyUnicode_2BYTE_KIND: {
+        Py_UCS2 *data = PyUnicode_2BYTE_DATA(s);
+
+        for (i = 0; i < length; i++) {
+
+        }
+
+        PyErr_SetString(PyExc_NotImplementedError, "UCS2 str");
+        return -1;
+
+        break;
+    }
+    default: {
+        Py_UCS4 *data = PyUnicode_4BYTE_DATA(s);
+
+        for (i = 0; i < length; i++) {
+
+        }
+
+        PyErr_SetString(PyExc_NotImplementedError, "UCS4 str");
+        return -1;
+    }
+    }
+
+    WRITE_CHAR('"');
+
+    return 0;
+}
+
+Py_LOCAL_INLINE(int)
+_append_bytes(Encoder *self, PyObject *bytes)
+{
+    PyErr_SetString(PyExc_NotImplementedError, "bytes");
+    return -1;
+}
+
+Py_LOCAL_INLINE(int)
+_append_fast_sequence(Encoder *self, PyObject *sequence)
+{
+    /* XXX: must be list/tuple, using the assumption macros */
+    int length = PySequence_Fast_GET_SIZE(sequence);
+
+    WRITE_CHAR('[');
+
+    if (length != 0) {
+        PyObject **items = PySequence_Fast_ITEMS(sequence);
+
+        int i;
+
+        for (i = 0; i < length; i++) {
+            if (i != 0) {
+                WRITE_CHAR(',');
+            }
+            _append(self, items[i]);
+        }
+    }
+
+    WRITE_CHAR(']');
+
+    return 0;
+}
+
+
+Py_LOCAL_INLINE(int)
 _populate_bytes_constant(Encoder *self, PyObject **member, char *name)
 {
     PyObject *str = PyObject_GetAttrString((PyObject*)self, name);
@@ -246,7 +343,7 @@ _populate_bytes_constant(Encoder *self, PyObject **member, char *name)
     return 0;
 }
 
-static int
+Py_LOCAL_INLINE(int)
 _populate_string_escapes(Encoder *self)
 {
     int retval = -1;
@@ -321,102 +418,6 @@ _populate_string_escapes(Encoder *self)
     }
 
     return retval;
-}
-
-static int
-_append_str(Encoder *self, PyObject *s)
-{
-    if (PyUnicode_READY(s) == -1) {
-        return -1;
-    }
-
-    Py_ssize_t length = PyUnicode_GET_LENGTH(s);
-
-    if (length == 0) {
-        return _write_const(self, "\"\"");
-    }
-
-    if (self->string_escapes == NULL) {
-        if (_populate_string_escapes(self) == -1) {
-            return -1;
-        }
-    }
-
-    WRITE_CHAR('"');
-
-    int i;
-    int kind = PyUnicode_KIND(s);
-
-    switch (kind) {
-    case PyUnicode_1BYTE_KIND: {
-        Py_UCS1 *data = PyUnicode_1BYTE_DATA(s);
-
-        for (i = 0; i < length; i++) {
-            /* TODO: map string_escapes */
-            _write_char(self, data[i]);
-        }
-        break;
-    }
-    case PyUnicode_2BYTE_KIND: {
-        Py_UCS2 *data = PyUnicode_2BYTE_DATA(s);
-
-        for (i = 0; i < length; i++) {
-
-        }
-
-        PyErr_SetString(PyExc_NotImplementedError, "UCS2 str");
-        return -1;
-
-        break;
-    }
-    default: {
-        Py_UCS4 *data = PyUnicode_4BYTE_DATA(s);
-
-        for (i = 0; i < length; i++) {
-
-        }
-
-        PyErr_SetString(PyExc_NotImplementedError, "UCS4 str");
-        return -1;
-    }
-    }
-
-    WRITE_CHAR('"');
-
-    return 0;
-}
-
-static int
-_append_bytes(Encoder *self, PyObject *bytes)
-{
-    PyErr_SetString(PyExc_NotImplementedError, "bytes");
-    return -1;
-}
-
-static int
-_append_fast_sequence(Encoder *self, PyObject *sequence)
-{
-    /* XXX: must be list/tuple, using the assumption macros */
-    int length = PySequence_Fast_GET_SIZE(sequence);
-
-    WRITE_CHAR('[');
-
-    if (length != 0) {
-        PyObject **items = PySequence_Fast_ITEMS(sequence);
-
-        int i;
-
-        for (i = 0; i < length; i++) {
-            if (i != 0) {
-                WRITE_CHAR(',');
-            }
-            _append(self, items[i]);
-        }
-    }
-
-    WRITE_CHAR(']');
-
-    return 0;
 }
 
 static int
