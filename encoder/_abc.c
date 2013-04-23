@@ -61,10 +61,9 @@ static int _populate_string_escapes(Encoder *self);
 
 static int _resize(Encoder *self);
 
-static inline int _write_char(Encoder *self, char c);
-static inline int _write_const(Encoder *self, const char *string);
-static inline int _write_bytes(Encoder *self, PyObject *bytes);
-
+Py_LOCAL_INLINE(int) _write_char(Encoder *self, char c);
+Py_LOCAL_INLINE(int) _write_const(Encoder *self, const char *string);
+Py_LOCAL_INLINE(int) _write_bytes(Encoder *self, PyObject *bytes);
 
 static PyObject *
 __new__(PyTypeObject *type, PyObject *args, PyObject **kwargs)
@@ -427,7 +426,7 @@ _resize(Encoder *self)
     return -1;
 }
 
-static inline int
+Py_LOCAL_INLINE(int)
 _write_char(Encoder *self, const char c)
 {
     if (self->length == self->length_max) {
@@ -441,7 +440,7 @@ _write_char(Encoder *self, const char c)
     return 0;
 }
 
-static inline int
+Py_LOCAL_INLINE(int)
 _write_const(Encoder *self, const char *c)
 {
     if (self->length + strlen(c) >= self->length_max) {
@@ -457,7 +456,7 @@ _write_const(Encoder *self, const char *c)
     return 0;
 }
 
-static inline int
+Py_LOCAL_INLINE(int)
 _write_bytes(Encoder *self, PyObject *bytes)
 {
     int length = PyBytes_GET_SIZE(bytes);
