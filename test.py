@@ -31,3 +31,6 @@ class JsonTests(unittest.TestCase):
 
     def test_str_literal(self):
         self.assertEqual(self.encode("abc"), '"abc"')
+
+    def test_str_escape(self):
+        self.assertEqual(self.encode("a\"bc"), '"a\\"bc"')
