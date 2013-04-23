@@ -28,3 +28,6 @@ class JsonTests(unittest.TestCase):
 
     def test_str_empty(self):
         self.assertEqual(self.encode(""), '""')
+
+    def test_str_literal(self):
+        self.assertEqual(self.encode("abc"), '"abc"')

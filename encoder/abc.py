@@ -27,3 +27,7 @@ class Encoder(_abc.Encoder):
     @property
     def FLOAT_NAN(self) -> str:
         raise CannotEncode(float('nan'))
+
+    @property
+    def STRING_ESCAPES(self) -> (dict, str, str):
+        raise NotImplementedError

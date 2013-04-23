@@ -5,23 +5,28 @@
 #define BUFFER_MAX_LENGTH 100000
 
 /* TODO: calc these instead of fudging. */
+
 const int SPRINTF_MAX_LONG_LONG_LENGTH = 30 + 1; /* +1 for /0 */
 const int SPRINTF_MAX_DOUBLE_LENGTH = 50 + 1;    /* +1 for /0 */
 
-#define _CHAR(c)                                  \
-    if (self->length == self->length_max)         \
-        if (_resize(self) == -1)                  \
-            return -1;                            \
-    self->buffer[self->length++] = c;
+/* These macros must be used with Encoder `self` in scope, and return -1 if errors. */
+
+#define WRITE_CHAR(__c)                               \
+    if (_write_char(self, __c) == -1)                 \
+        return -1;
+
+#define WRITE_CONST(__s)                                                \
+    if (_write_const(self, __s) == -1)                                  \
+        return -1;
 
 #define ENSURE_CAN_HOLD(__length)                                       \
     if (self->length + __length >= self->length_max)                    \
         if (_resize(self) == -1)                                        \
             return -1;
 
-#define READY_CONST(member, attribute)                           \
+#define READY_BYTES_CONSTANT(member, attribute)                  \
     if (member == NULL)                                          \
-        if (_populate(self, &member, attribute) == -1)           \
+        if (_populate_bytes_constant(self, &member, attribute) == -1)           \
             return -1;
 
 typedef struct {
@@ -35,6 +40,7 @@ typedef struct {
     PyObject *float_infinity;
     PyObject *float_negative_infinity;
     PyObject *float_nan;
+    PyObject *string_escapes;
 } Encoder;
 
 PyDoc_STRVAR(Encoder_doc,
@@ -50,30 +56,15 @@ static int _append_str(Encoder *self, PyObject *o);
 static int _append_bytes(Encoder *self, PyObject *o);
 static int _append_fast_sequence(Encoder *self, PyObject *o);
 
+static int _populate_bytes_constant(Encoder *self, PyObject **member, char *name);
+static int _populate_string_escapes(Encoder *self);
+
 static int _resize(Encoder *self);
-static int _write(Encoder *self, char *string, int length);
 
-static int
-_populate(Encoder *self, PyObject **member, char *name)
-{
-    PyObject *str = PyObject_GetAttrString((PyObject*)self, name);
+static inline int _write_char(Encoder *self, char c);
+static inline int _write_const(Encoder *self, const char *string);
+static inline int _write_bytes(Encoder *self, PyObject *bytes);
 
-    if (str == NULL) {
-        return -1;
-    }
-
-    PyObject *bytes = PyUnicode_AsEncodedString(str, NULL, NULL);
-
-    Py_DECREF(str);
-
-    if (bytes == NULL) {
-        return -1;
-    }
-
-    *member = bytes;
-
-    return 0;
-}
 
 static PyObject *
 __new__(PyTypeObject *type, PyObject *args, PyObject **kwargs)
@@ -98,6 +89,8 @@ __new__(PyTypeObject *type, PyObject *args, PyObject **kwargs)
     self->float_negative_infinity = NULL;
     self->float_nan = NULL;
 
+    self->string_escapes = NULL;
+
     return (PyObject *)self;
 }
 
@@ -112,6 +105,8 @@ __del__(Encoder* self)
     Py_XDECREF(self->float_infinity);
     Py_XDECREF(self->float_negative_infinity);
     Py_XDECREF(self->float_nan);
+
+    Py_XDECREF(self->string_escapes);
 
     Py_TYPE(self)->tp_free((PyObject*)self);
 }
@@ -150,16 +145,16 @@ static int
 _append(Encoder *self, PyObject *o)
 {
     if (o == Py_None) {
-        READY_CONST(self->none, "NONE");
-        return _write(self, PyBytes_AS_STRING(self->none), PyBytes_GET_SIZE(self->none));
+        READY_BYTES_CONSTANT(self->none, "NONE");
+        return _write_bytes(self, self->none);
     }
     if (o == Py_True) {
-        READY_CONST(self->bool_true, "BOOL_TRUE");
-        return _write(self, PyBytes_AS_STRING(self->bool_true), PyBytes_GET_SIZE(self->bool_true));
+        READY_BYTES_CONSTANT(self->bool_true, "BOOL_TRUE");
+        return _write_bytes(self, self->bool_true);
     }
     if (o == Py_False) {
-        READY_CONST(self->bool_false, "BOOL_FALSE");
-        return _write(self, PyBytes_AS_STRING(self->bool_false), PyBytes_GET_SIZE(self->bool_false));
+        READY_BYTES_CONSTANT(self->bool_false, "BOOL_FALSE");
+        return _write_bytes(self, self->bool_false);
     }
     if (PyLong_Check(o)) {
         return _append_int(self, o);
@@ -231,6 +226,105 @@ _append_float(Encoder *self, PyObject *f)
 }
 
 static int
+_populate_bytes_constant(Encoder *self, PyObject **member, char *name)
+{
+    PyObject *str = PyObject_GetAttrString((PyObject*)self, name);
+
+    if (str == NULL) {
+        return -1;
+    }
+
+    PyObject *bytes = PyUnicode_AsEncodedString(str, NULL, NULL);
+
+    Py_DECREF(str);
+
+    if (bytes == NULL) {
+        return -1;
+    }
+
+    *member = bytes;
+
+    return 0;
+}
+
+static int
+_populate_string_escapes(Encoder *self)
+{
+    int retval = -1;
+
+    /* Borrowed references */
+    PyObject *key, *value;
+
+    /* Temporary references */
+    PyObject *key_bytes = NULL;
+    PyObject *value_bytes = NULL;
+    PyObject *user_string_escapes = PyObject_GetAttrString((PyObject*)self, "STRING_ESCAPES");
+    if (user_string_escapes == NULL) {
+        goto bail;
+    }
+
+    if (!PyDict_Check(user_string_escapes)) {
+        PyErr_Format(PyExc_TypeError, "STRING_ESCAPES: expected dict, got: %s", Py_TYPE(user_string_escapes)->tp_name);
+        goto bail;
+    }
+
+    /* Must decref on error. */
+    self->string_escapes = PyDict_New();
+    if (self->string_escapes == NULL) {
+        goto bail;
+    }
+
+    Py_ssize_t pos = 0;
+
+    while (PyDict_Next(user_string_escapes, &pos, &key, &value)) {
+        if (!PyUnicode_Check(key) || !PyUnicode_Check(value)) {
+            PyErr_Format(PyExc_TypeError, "STRING_ESCAPES: expected dict[str] -> str, got item (%s, %s)",
+                         Py_TYPE(key)->tp_name, Py_TYPE(value)->tp_name);
+            goto bail;
+        }
+
+
+        key_bytes = PyUnicode_AsEncodedString(key, NULL, NULL);
+        if (key_bytes == NULL) {
+            goto bail;
+        }
+
+        if (PyBytes_GET_SIZE(key_bytes) != 1) {
+            PyErr_Format(PyExc_ValueError, "STRING_ESCAPES: keys must be single characters, got: %s",
+                         PyBytes_AS_STRING(key_bytes));
+            goto bail;
+        }
+
+        value_bytes = PyUnicode_AsEncodedString(value, NULL, NULL);
+        if (value_bytes == NULL) {
+            goto bail;
+        }
+
+
+        if (PyDict_SetItem(self->string_escapes, key_bytes, value_bytes) == -1) {
+            goto bail;
+        }
+
+
+        Py_DECREF(key_bytes);
+        Py_DECREF(value_bytes);
+    }
+
+    retval = 0;
+
+  bail:
+    Py_XDECREF(user_string_escapes);
+    Py_XDECREF(key_bytes);
+    Py_XDECREF(value_bytes);
+
+    if (retval == -1) {
+        Py_XDECREF(self->string_escapes);
+    }
+
+    return retval;
+}
+
+static int
 _append_str(Encoder *self, PyObject *s)
 {
     if (PyUnicode_READY(s) == -1) {
@@ -239,14 +333,56 @@ _append_str(Encoder *self, PyObject *s)
 
     Py_ssize_t length = PyUnicode_GET_LENGTH(s);
 
-    _CHAR('"');
-
-    if (length != 0) {
-        PyErr_SetString(PyExc_NotImplementedError, "non-empty strings");
-        return -1;
+    if (length == 0) {
+        return _write_const(self, "\"\"");
     }
 
-    _CHAR('"');
+    if (self->string_escapes == NULL) {
+        if (_populate_string_escapes(self) == -1) {
+            return -1;
+        }
+    }
+
+    WRITE_CHAR('"');
+
+    int i;
+    int kind = PyUnicode_KIND(s);
+
+    switch (kind) {
+    case PyUnicode_1BYTE_KIND: {
+        Py_UCS1 *data = PyUnicode_1BYTE_DATA(s);
+
+        for (i = 0; i < length; i++) {
+            /* TODO: map string_escapes */
+            _write_char(self, data[i]);
+        }
+        break;
+    }
+    case PyUnicode_2BYTE_KIND: {
+        Py_UCS2 *data = PyUnicode_2BYTE_DATA(s);
+
+        for (i = 0; i < length; i++) {
+
+        }
+
+        PyErr_SetString(PyExc_NotImplementedError, "UCS2 str");
+        return -1;
+
+        break;
+    }
+    default: {
+        Py_UCS4 *data = PyUnicode_4BYTE_DATA(s);
+
+        for (i = 0; i < length; i++) {
+
+        }
+
+        PyErr_SetString(PyExc_NotImplementedError, "UCS4 str");
+        return -1;
+    }
+    }
+
+    WRITE_CHAR('"');
 
     return 0;
 }
@@ -264,7 +400,7 @@ _append_fast_sequence(Encoder *self, PyObject *sequence)
     /* XXX: must be list/tuple, using the assumption macros */
     int length = PySequence_Fast_GET_SIZE(sequence);
 
-    _CHAR('[');
+    WRITE_CHAR('[');
 
     if (length != 0) {
         PyObject **items = PySequence_Fast_ITEMS(sequence);
@@ -273,13 +409,13 @@ _append_fast_sequence(Encoder *self, PyObject *sequence)
 
         for (i = 0; i < length; i++) {
             if (i != 0) {
-                _CHAR(',');
+                WRITE_CHAR(',');
             }
             _append(self, items[i]);
         }
     }
 
-    _CHAR(']');
+    WRITE_CHAR(']');
 
     return 0;
 }
@@ -291,16 +427,45 @@ _resize(Encoder *self)
     return -1;
 }
 
-static int
-_write(Encoder *self, char *string, int length)
+static inline int
+_write_char(Encoder *self, const char c)
 {
-    ENSURE_CAN_HOLD(length)
-
-    int i;
-
-    for (i = 0; i < length; i++) {
-        self->buffer[self->length + i] = string[i];
+    if (self->length == self->length_max) {
+        if (_resize(self) == -1) {
+            return -1;
+        }
     }
+
+    self->buffer[self->length++] = c;
+
+    return 0;
+}
+
+static inline int
+_write_const(Encoder *self, const char *c)
+{
+    if (self->length + strlen(c) >= self->length_max) {
+        if (_resize(self) == -1) {
+            return -1;
+        }
+    }
+
+    strncpy(self->buffer, c, strlen(c));
+
+    self->length += strlen(c);
+
+    return 0;
+}
+
+static inline int
+_write_bytes(Encoder *self, PyObject *bytes)
+{
+    int length = PyBytes_GET_SIZE(bytes);
+    char *string = PyBytes_AS_STRING(bytes);
+
+    ENSURE_CAN_HOLD(length);
+
+    strncpy(self->buffer, string, length);
 
     self->length += length;
 
