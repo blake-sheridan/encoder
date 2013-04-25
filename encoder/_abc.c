@@ -550,7 +550,7 @@ _write_bytes(Encoder *self, PyObject *bytes)
 
     ENSURE_CAN_HOLD(length);
 
-    strncpy(self->buffer, string, length);
+    strncpy(&(self->buffer)[self->length], string, length);
 
     self->length += length;
 
