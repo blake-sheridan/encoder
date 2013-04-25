@@ -41,7 +41,7 @@ typedef struct {
     PyObject *float_negative_infinity;
     PyObject *float_nan;
     PyObject *string_escapes;
-    PyObject *string_translation_table;
+    PyObject *str_translation_table;
 } Encoder;
 
 PyDoc_STRVAR(Encoder_doc,
@@ -54,9 +54,9 @@ static int _append(Encoder *self, PyObject *o);
 Py_LOCAL_INLINE(int) _append_int(Encoder *self, PyObject *o);
 Py_LOCAL_INLINE(int) _append_float(Encoder *self, PyObject *o);
 Py_LOCAL_INLINE(int) _append_str(Encoder *self, PyObject *o);
-Py_LOCAL_INLINE(int) _append_str_1(Encoder *self, PyObject *o, int length);
-Py_LOCAL_INLINE(int) _append_str_2(Encoder *self, PyObject *o, int length);
-Py_LOCAL_INLINE(int) _append_str_4(Encoder *self, PyObject *o, int length);
+Py_LOCAL_INLINE(int) _append_str_1byte_kind(Encoder *self, PyObject *o, int length);
+Py_LOCAL_INLINE(int) _append_str_2byte_kind(Encoder *self, PyObject *o, int length);
+Py_LOCAL_INLINE(int) _append_str_4byte_kind(Encoder *self, PyObject *o, int length);
 Py_LOCAL_INLINE(int) _append_str_naive(Encoder *self, PyObject *o, int length);
 
 Py_LOCAL_INLINE(int) _append_bytes(Encoder *self, PyObject *o);
@@ -64,7 +64,7 @@ Py_LOCAL_INLINE(int) _append_fast_sequence(Encoder *self, PyObject *o);
 
 Py_LOCAL_INLINE(int) _populate_bytes_constant(Encoder *self, PyObject **member, char *name);
 Py_LOCAL_INLINE(int) _populate_string_escapes(Encoder *self);
-Py_LOCAL_INLINE(int) _populate_string_translation_table(Encoder *self);
+Py_LOCAL_INLINE(int) _populate_str_translation_table(Encoder *self);
 
 static int _resize(Encoder *self);
 
@@ -96,7 +96,7 @@ __new__(PyTypeObject *type, PyObject *args, PyObject **kwargs)
     self->float_nan = NULL;
 
     self->string_escapes = NULL;
-    self->string_translation_table = NULL;
+    self->str_translation_table = NULL;
 
     return (PyObject *)self;
 }
@@ -114,7 +114,7 @@ __del__(Encoder* self)
     Py_XDECREF(self->float_nan);
 
     Py_XDECREF(self->string_escapes);
-    Py_XDECREF(self->string_translation_table);
+    Py_XDECREF(self->str_translation_table);
 
     Py_TYPE(self)->tp_free((PyObject*)self);
 }
@@ -250,19 +250,19 @@ _append_str(Encoder *self, PyObject *s)
 
     switch (PyUnicode_KIND(s)) {
     case PyUnicode_1BYTE_KIND: {
-        if (_append_str_1(self, s, length) == -1) {
+        if (_append_str_1byte_kind(self, s, length) == -1) {
             return -1;
         }
         break;
     }
     case PyUnicode_2BYTE_KIND: {
-        if (_append_str_2(self, s, length) == -1) {
+        if (_append_str_2byte_kind(self, s, length) == -1) {
             return -1;
         }
         break;
     }
     default: {
-        if (_append_str_4(self, s, length) == -1) {
+        if (_append_str_4byte_kind(self, s, length) == -1) {
             return -1;
         }
     }
@@ -274,7 +274,7 @@ _append_str(Encoder *self, PyObject *s)
 }
 
 Py_LOCAL_INLINE(int)
-_append_str_1(Encoder *self, PyObject *s, int length)
+_append_str_1byte_kind(Encoder *self, PyObject *s, int length)
 {
     /* TEMP: use correct, but slow, version. */
     return _append_str_naive(self, s, length);
@@ -293,13 +293,13 @@ _append_str_1(Encoder *self, PyObject *s, int length)
 }
 
 Py_LOCAL_INLINE(int)
-_append_str_2(Encoder *self, PyObject *s, int length)
+_append_str_2byte_kind(Encoder *self, PyObject *s, int length)
 {
     return _append_str_naive(self, s, length);
 }
 
 Py_LOCAL_INLINE(int)
-_append_str_4(Encoder *self, PyObject *s, int length)
+_append_str_4byte_kind(Encoder *self, PyObject *s, int length)
 {
     return _append_str_naive(self, s, length);
 }
@@ -314,13 +314,13 @@ _append_str_naive(Encoder *self, PyObject *s, int length)
     PyObject *translated_bytes = NULL;
     int retval = -1;
 
-    if (self->string_translation_table == NULL) {
-        if (_populate_string_translation_table(self) == -1) {
+    if (self->str_translation_table == NULL) {
+        if (_populate_str_translation_table(self) == -1) {
             goto bail;
         }
     }
 
-    translated = PyUnicode_Translate(s, self->string_translation_table, NULL);
+    translated = PyUnicode_Translate(s, self->str_translation_table, NULL);
     if (translated == NULL) {
         goto bail;
     }
@@ -477,7 +477,7 @@ _populate_string_escapes(Encoder *self)
 }
 
 Py_LOCAL_INLINE(int)
-_populate_string_translation_table(Encoder *self)
+_populate_str_translation_table(Encoder *self)
 {
     PyObject *user_string_escapes = PyObject_GetAttrString((PyObject*)self, "STRING_ESCAPES");
     if (user_string_escapes == NULL) {
@@ -495,10 +495,10 @@ _populate_string_translation_table(Encoder *self)
         return -1;
     }
 
-    self->string_translation_table = PyObject_CallFunctionObjArgs(maketrans, user_string_escapes, NULL);
+    self->str_translation_table = PyObject_CallFunctionObjArgs(maketrans, user_string_escapes, NULL);
 
 
-    if (self->string_translation_table == NULL) {
+    if (self->str_translation_table == NULL) {
         return -1;
     }
 
