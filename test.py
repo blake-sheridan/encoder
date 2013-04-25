@@ -34,3 +34,7 @@ class JsonTests(unittest.TestCase):
 
     def test_str_escape(self):
         self.assertEqual(self.encode("a\"bc"), '"a\\"bc"')
+
+    def test_list(self):
+        # Keep test agnostic as to spaces after commas
+        self.assertEqual(self.encode([1, 2, 3]), '[1, 2, 3]'.replace(' ', ''))
