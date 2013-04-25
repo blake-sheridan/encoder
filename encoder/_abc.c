@@ -41,6 +41,7 @@ typedef struct {
     PyObject *float_negative_infinity;
     PyObject *float_nan;
     PyObject *string_escapes;
+    PyObject *string_translation_table;
 } Encoder;
 
 PyDoc_STRVAR(Encoder_doc,
@@ -53,11 +54,17 @@ static int _append(Encoder *self, PyObject *o);
 Py_LOCAL_INLINE(int) _append_int(Encoder *self, PyObject *o);
 Py_LOCAL_INLINE(int) _append_float(Encoder *self, PyObject *o);
 Py_LOCAL_INLINE(int) _append_str(Encoder *self, PyObject *o);
+Py_LOCAL_INLINE(int) _append_str_1(Encoder *self, PyObject *o, int length);
+Py_LOCAL_INLINE(int) _append_str_2(Encoder *self, PyObject *o, int length);
+Py_LOCAL_INLINE(int) _append_str_4(Encoder *self, PyObject *o, int length);
+Py_LOCAL_INLINE(int) _append_str_naive(Encoder *self, PyObject *o, int length);
+
 Py_LOCAL_INLINE(int) _append_bytes(Encoder *self, PyObject *o);
 Py_LOCAL_INLINE(int) _append_fast_sequence(Encoder *self, PyObject *o);
 
 Py_LOCAL_INLINE(int) _populate_bytes_constant(Encoder *self, PyObject **member, char *name);
 Py_LOCAL_INLINE(int) _populate_string_escapes(Encoder *self);
+Py_LOCAL_INLINE(int) _populate_string_translation_table(Encoder *self);
 
 static int _resize(Encoder *self);
 
@@ -89,6 +96,7 @@ __new__(PyTypeObject *type, PyObject *args, PyObject **kwargs)
     self->float_nan = NULL;
 
     self->string_escapes = NULL;
+    self->string_translation_table = NULL;
 
     return (PyObject *)self;
 }
@@ -106,6 +114,7 @@ __del__(Encoder* self)
     Py_XDECREF(self->float_nan);
 
     Py_XDECREF(self->string_escapes);
+    Py_XDECREF(self->string_translation_table);
 
     Py_TYPE(self)->tp_free((PyObject*)self);
 }
@@ -237,54 +246,101 @@ _append_str(Encoder *self, PyObject *s)
         return _write_const(self, "\"\"");
     }
 
-    if (self->string_escapes == NULL) {
-        if (_populate_string_escapes(self) == -1) {
-            return -1;
-        }
-    }
-
     WRITE_CHAR('"');
 
-    int i;
-    int kind = PyUnicode_KIND(s);
-
-    switch (kind) {
+    switch (PyUnicode_KIND(s)) {
     case PyUnicode_1BYTE_KIND: {
-        Py_UCS1 *data = PyUnicode_1BYTE_DATA(s);
-
-        for (i = 0; i < length; i++) {
-            /* TODO: map string_escapes */
-            _write_char(self, data[i]);
+        if (_append_str_1(self, s, length) == -1) {
+            return -1;
         }
         break;
     }
     case PyUnicode_2BYTE_KIND: {
-        Py_UCS2 *data = PyUnicode_2BYTE_DATA(s);
-
-        for (i = 0; i < length; i++) {
-
+        if (_append_str_2(self, s, length) == -1) {
+            return -1;
         }
-
-        PyErr_SetString(PyExc_NotImplementedError, "UCS2 str");
-        return -1;
-
         break;
     }
     default: {
-        Py_UCS4 *data = PyUnicode_4BYTE_DATA(s);
-
-        for (i = 0; i < length; i++) {
-
+        if (_append_str_4(self, s, length) == -1) {
+            return -1;
         }
-
-        PyErr_SetString(PyExc_NotImplementedError, "UCS4 str");
-        return -1;
     }
     }
 
     WRITE_CHAR('"');
 
     return 0;
+}
+
+Py_LOCAL_INLINE(int)
+_append_str_1(Encoder *self, PyObject *s, int length)
+{
+    /* TEMP: use correct, but slow, version. */
+    return _append_str_naive(self, s, length);
+
+    Py_UCS1 *data = PyUnicode_1BYTE_DATA(s);
+    int i;
+
+    for (i = 0; i < length; i++) {
+        /* TODO: map string_escapes */
+        if (_write_char(self, data[i]) == -1) {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+Py_LOCAL_INLINE(int)
+_append_str_2(Encoder *self, PyObject *s, int length)
+{
+    return _append_str_naive(self, s, length);
+}
+
+Py_LOCAL_INLINE(int)
+_append_str_4(Encoder *self, PyObject *s, int length)
+{
+    return _append_str_naive(self, s, length);
+}
+
+Py_LOCAL_INLINE(int)
+_append_str_naive(Encoder *self, PyObject *s, int length)
+{
+    /* Handle STRING_ESCAPES correctly for any unicode,
+       but 2x as slow as json_encode_basestring_ascii when I measured. */
+
+    PyObject *translated = NULL;
+    PyObject *translated_bytes = NULL;
+    int retval = -1;
+
+    if (self->string_translation_table == NULL) {
+        if (_populate_string_translation_table(self) == -1) {
+            goto bail;
+        }
+    }
+
+    translated = PyUnicode_Translate(s, self->string_translation_table, NULL);
+    if (translated == NULL) {
+        goto bail;
+    }
+
+    translated_bytes = PyUnicode_AsEncodedString(translated, NULL, NULL);
+    if (translated_bytes == NULL) {
+        goto bail;
+    }
+
+    if (_write_bytes(self, translated_bytes) == -1) {
+        goto bail;
+    }
+
+    retval = 0;
+
+  bail:
+    Py_XDECREF(translated);
+    Py_XDECREF(translated_bytes);
+
+    return retval;
 }
 
 Py_LOCAL_INLINE(int)
@@ -418,6 +474,35 @@ _populate_string_escapes(Encoder *self)
     }
 
     return retval;
+}
+
+Py_LOCAL_INLINE(int)
+_populate_string_translation_table(Encoder *self)
+{
+    PyObject *user_string_escapes = PyObject_GetAttrString((PyObject*)self, "STRING_ESCAPES");
+    if (user_string_escapes == NULL) {
+        return -1;
+    }
+
+    PyObject *s = PyUnicode_New(0, 127); //FromStringAndSize("", 0);
+    if (s == NULL) {
+        return -1;
+    }
+
+    PyObject *maketrans = PyObject_GetAttrString(s, "maketrans");
+    Py_DECREF(s);
+    if (maketrans == NULL) {
+        return -1;
+    }
+
+    self->string_translation_table = PyObject_CallFunctionObjArgs(maketrans, user_string_escapes, NULL);
+
+
+    if (self->string_translation_table == NULL) {
+        return -1;
+    }
+
+    return 0;
 }
 
 static int
