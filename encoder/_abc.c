@@ -68,6 +68,7 @@ Py_LOCAL_INLINE(int) _append_str_4byte_kind(Encoder *self, PyObject *o, int leng
 Py_LOCAL_INLINE(int) _append_str_naive(Encoder *self, PyObject *o, int length);
 
 Py_LOCAL_INLINE(int) _append_bytes(Encoder *self, PyObject *o);
+Py_LOCAL_INLINE(int) _append_dict(Encoder *self, PyObject *o);
 Py_LOCAL_INLINE(int) _append_fast_sequence(Encoder *self, PyObject *o);
 
 Py_LOCAL_INLINE(PyObject*)  _get_str_translation_table(Encoder *self);
@@ -190,6 +191,9 @@ _append(Encoder *self, PyObject *o)
             return -1;
         }
         return _append_fast_sequence(self, checked);
+    }
+    if (PyDict_Check(o)) {
+        return _append_dict(self, o);
     }
 
     PyErr_Format(PyExc_TypeError, "Do not know how to encode %s", o->ob_type->tp_name);
@@ -388,17 +392,54 @@ _append_bytes(Encoder *self, PyObject *bytes)
 }
 
 Py_LOCAL_INLINE(int)
+_append_dict(Encoder *self, PyObject *dict)
+{
+    PyObject *key;
+    PyObject *value;
+
+    Py_ssize_t pos = 0; /* NOT incremental */
+    int index = 0;
+
+    while (PyDict_Next(dict, &pos, &key, &value)) {
+        if (index == 0) {
+            CHAR('{');
+        }
+        else {
+            CHAR(',');
+        }
+
+        _append(self, key);
+        CHAR(':');
+        _append(self, value);
+
+        index++;
+    }
+
+    if (index == 0) {
+        /* Empty. */
+        STRING("{}", 2);
+    } else {
+        CHAR('}');
+    }
+
+    return 0;
+}
+
+Py_LOCAL_INLINE(int)
 _append_fast_sequence(Encoder *self, PyObject *sequence)
 {
     /* XXX: must be list/tuple, using the assumption macros */
     int length = PySequence_Fast_GET_SIZE(sequence);
 
-    CHAR('[');
-
-    if (length != 0) {
+    if (length == 0) {
+        STRING("[]", 2);
+    }
+    else {
         PyObject **items = PySequence_Fast_ITEMS(sequence);
 
         int i;
+
+        CHAR('[');
 
         for (i = 0; i < length; i++) {
             if (i != 0) {
@@ -406,9 +447,9 @@ _append_fast_sequence(Encoder *self, PyObject *sequence)
             }
             _append(self, items[i]);
         }
-    }
 
-    CHAR(']');
+        CHAR(']');
+    }
 
     return 0;
 }

@@ -38,3 +38,15 @@ class JsonTests(unittest.TestCase):
     def test_list(self):
         # Keep test agnostic as to spaces after commas
         self.assertEqual(self.encode([1, 2, 3]), '[1, 2, 3]'.replace(' ', ''))
+
+    def test_dict(self):
+        # Keep test agnostic as to spaces after commas.
+        # This one's harder to check, due to dict randomization
+
+        DICT = {'a': True, 'b': False, 'c': None}
+
+        encoded = self.encode(DICT)
+
+        evalable = encoded.replace('true', 'True').replace('false', 'False').replace('null', 'None')
+
+        self.assertEqual(DICT, eval(evalable))
