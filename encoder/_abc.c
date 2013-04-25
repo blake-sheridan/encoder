@@ -9,25 +9,33 @@
 const int SPRINTF_MAX_LONG_LONG_LENGTH = 30 + 1; /* +1 for /0 */
 const int SPRINTF_MAX_DOUBLE_LENGTH = 50 + 1;    /* +1 for /0 */
 
+const char QUOTE = '"';
+
+/* These macros must be used with Encoder `self` in scope and ASSUME length has been checked. */
+
+#define CHAR_UNSAFE(__char)                            \
+    self->buffer[self->length++] = __char;
+
+#define STRING_UNSAFE(__string, __length)                              \
+    strncpy(&(self->buffer)[self->length], __string, __length); \
+    self->length += __length;
+
 /* These macros must be used with Encoder `self` in scope, and return -1 if errors. */
-
-#define WRITE_CHAR(__c)                               \
-    if (_write_char(self, __c) == -1)                 \
-        return -1;
-
-#define WRITE_CONST(__s)                                                \
-    if (_write_const(self, __s) == -1)                                  \
-        return -1;
 
 #define ENSURE_CAN_HOLD(__length)                                       \
     if (self->length + __length >= self->length_max)                    \
         if (_resize(self) == -1)                                        \
             return -1;
 
-#define READY_BYTES_CONSTANT(member, attribute)                  \
-    if (member == NULL)                                          \
-        if (_populate_bytes_constant(self, &member, attribute) == -1)           \
-            return -1;
+#define CHAR(__char)                            \
+    if (self->length == self->length_max)       \
+        if (_resize(self) == -1)                \
+            return -1;                          \
+    CHAR_UNSAFE(__char);
+
+#define STRING(__string, __length)                \
+    ENSURE_CAN_HOLD(__length);                    \
+    STRING_UNSAFE(__string, __length);
 
 typedef struct {
     PyObject_HEAD
@@ -40,8 +48,8 @@ typedef struct {
     PyObject *float_infinity;
     PyObject *float_negative_infinity;
     PyObject *float_nan;
-    PyObject *string_escapes;
-    PyObject *str_translation_table;
+    PyObject *_str_translation_table;
+    Py_UCS1 **_str_ucs1_mapping;
 } Encoder;
 
 PyDoc_STRVAR(Encoder_doc,
@@ -62,15 +70,16 @@ Py_LOCAL_INLINE(int) _append_str_naive(Encoder *self, PyObject *o, int length);
 Py_LOCAL_INLINE(int) _append_bytes(Encoder *self, PyObject *o);
 Py_LOCAL_INLINE(int) _append_fast_sequence(Encoder *self, PyObject *o);
 
-Py_LOCAL_INLINE(int) _populate_bytes_constant(Encoder *self, PyObject **member, char *name);
-Py_LOCAL_INLINE(int) _populate_string_escapes(Encoder *self);
-Py_LOCAL_INLINE(int) _populate_str_translation_table(Encoder *self);
+Py_LOCAL_INLINE(PyObject*)  _get_str_translation_table(Encoder *self);
+Py_LOCAL_INLINE(Py_UCS1 **) _get_str_ucs1_mapping(Encoder *self);
+
 
 static int _resize(Encoder *self);
 
-Py_LOCAL_INLINE(int) _write_char(Encoder *self, char c);
-Py_LOCAL_INLINE(int) _write_const(Encoder *self, const char *string);
 Py_LOCAL_INLINE(int) _write_bytes(Encoder *self, PyObject *bytes);
+Py_LOCAL_INLINE(int) _write_bytes_constant(Encoder *self, PyObject **member, const char *attrname);
+
+static void _xfree_str_ucs1_mapping(Encoder *self);
 
 static PyObject *
 __new__(PyTypeObject *type, PyObject *args, PyObject **kwargs)
@@ -95,8 +104,8 @@ __new__(PyTypeObject *type, PyObject *args, PyObject **kwargs)
     self->float_negative_infinity = NULL;
     self->float_nan = NULL;
 
-    self->string_escapes = NULL;
-    self->str_translation_table = NULL;
+    self->_str_translation_table = NULL;
+    self->_str_ucs1_mapping = NULL;
 
     return (PyObject *)self;
 }
@@ -113,8 +122,9 @@ __del__(Encoder* self)
     Py_XDECREF(self->float_negative_infinity);
     Py_XDECREF(self->float_nan);
 
-    Py_XDECREF(self->string_escapes);
-    Py_XDECREF(self->str_translation_table);
+    Py_XDECREF(self->_str_translation_table);
+
+    _xfree_str_ucs1_mapping(self);
 
     Py_TYPE(self)->tp_free((PyObject*)self);
 }
@@ -153,16 +163,13 @@ static int
 _append(Encoder *self, PyObject *o)
 {
     if (o == Py_None) {
-        READY_BYTES_CONSTANT(self->none, "NONE");
-        return _write_bytes(self, self->none);
+        return _write_bytes_constant(self, &self->none, "NONE");
     }
     if (o == Py_True) {
-        READY_BYTES_CONSTANT(self->bool_true, "BOOL_TRUE");
-        return _write_bytes(self, self->bool_true);
+        return _write_bytes_constant(self, &self->bool_true, "BOOL_TRUE");
     }
     if (o == Py_False) {
-        READY_BYTES_CONSTANT(self->bool_false, "BOOL_FALSE");
-        return _write_bytes(self, self->bool_false);
+        return _write_bytes_constant(self, &self->bool_false, "BOOL_FALSE");
     }
     if (PyLong_Check(o)) {
         return _append_int(self, o);
@@ -243,50 +250,77 @@ _append_str(Encoder *self, PyObject *s)
     Py_ssize_t length = PyUnicode_GET_LENGTH(s);
 
     if (length == 0) {
-        return _write_const(self, "\"\"");
+        STRING("\"\"", 2);
+        return 0;
     }
-
-    WRITE_CHAR('"');
 
     switch (PyUnicode_KIND(s)) {
     case PyUnicode_1BYTE_KIND: {
-        if (_append_str_1byte_kind(self, s, length) == -1) {
-            return -1;
-        }
-        break;
+        return _append_str_1byte_kind(self, s, length);
     }
     case PyUnicode_2BYTE_KIND: {
-        if (_append_str_2byte_kind(self, s, length) == -1) {
-            return -1;
-        }
-        break;
+        return _append_str_2byte_kind(self, s, length);
     }
     default: {
-        if (_append_str_4byte_kind(self, s, length) == -1) {
-            return -1;
-        }
+        return _append_str_4byte_kind(self, s, length);
     }
     }
-
-    WRITE_CHAR('"');
 
     return 0;
 }
 
 Py_LOCAL_INLINE(int)
-_append_str_1byte_kind(Encoder *self, PyObject *s, int length)
+_append_str_1byte_kind(Encoder *self, PyObject *s, int slen)
 {
-    /* TEMP: use correct, but slow, version. */
-    return _append_str_naive(self, s, length);
+    Py_UCS1 **mapping = _get_str_ucs1_mapping(self);
+    if (mapping == NULL) {
+        return -1;
+    }
 
     Py_UCS1 *data = PyUnicode_1BYTE_DATA(s);
+    PyObject *sub; /* bytes substitution */
     int i;
+    int index_written = -1;
 
-    for (i = 0; i < length; i++) {
-        /* TODO: map string_escapes */
-        if (_write_char(self, data[i]) == -1) {
-            return -1;
+    for (i = 0; i < slen; i++) {
+        sub = mapping[data[i]];
+
+        if (sub != NULL) {
+            if (index_written == -1) {
+                CHAR(QUOTE);
+
+                if (i != 0) {
+                    STRING((char *)data, i);
+                }
+            }
+            else {
+                if (i != 0) {
+                    STRING(&data[index_written + 1], i - index_written);
+                }
+            }
+
+            if (_write_bytes(self, sub) == -1) {
+                return -1;
+            }
+
+            index_written = i;
         }
+    }
+
+    if (index_written == -1) {
+        /* The best case, where no subs occured. */
+        ENSURE_CAN_HOLD(slen + 2);
+
+        CHAR_UNSAFE(QUOTE);
+        STRING_UNSAFE((char *)data, slen);
+        CHAR_UNSAFE(QUOTE);
+    }
+    else {
+        if (index_written != slen - 1) {
+            STRING(&data[index_written + 1], slen - index_written - 1);
+        }
+
+        CHAR(QUOTE);
     }
 
     return 0;
@@ -314,13 +348,12 @@ _append_str_naive(Encoder *self, PyObject *s, int length)
     PyObject *translated_bytes = NULL;
     int retval = -1;
 
-    if (self->str_translation_table == NULL) {
-        if (_populate_str_translation_table(self) == -1) {
-            goto bail;
-        }
+    PyObject *translation_table = _get_str_translation_table(self);
+    if (translation_table == NULL) {
+        goto bail;
     }
 
-    translated = PyUnicode_Translate(s, self->str_translation_table, NULL);
+    translated = PyUnicode_Translate(s, translation_table, NULL);
     if (translated == NULL) {
         goto bail;
     }
@@ -330,9 +363,13 @@ _append_str_naive(Encoder *self, PyObject *s, int length)
         goto bail;
     }
 
+    CHAR(QUOTE);
+
     if (_write_bytes(self, translated_bytes) == -1) {
         goto bail;
     }
+
+    CHAR(QUOTE);
 
     retval = 0;
 
@@ -356,7 +393,7 @@ _append_fast_sequence(Encoder *self, PyObject *sequence)
     /* XXX: must be list/tuple, using the assumption macros */
     int length = PySequence_Fast_GET_SIZE(sequence);
 
-    WRITE_CHAR('[');
+    CHAR('[');
 
     if (length != 0) {
         PyObject **items = PySequence_Fast_ITEMS(sequence);
@@ -365,65 +402,52 @@ _append_fast_sequence(Encoder *self, PyObject *sequence)
 
         for (i = 0; i < length; i++) {
             if (i != 0) {
-                WRITE_CHAR(',');
+                CHAR(',');
             }
             _append(self, items[i]);
         }
     }
 
-    WRITE_CHAR(']');
+    CHAR(']');
 
     return 0;
 }
 
 
-Py_LOCAL_INLINE(int)
-_populate_bytes_constant(Encoder *self, PyObject **member, char *name)
+Py_LOCAL_INLINE(Py_UCS1**)
+_get_str_ucs1_mapping(Encoder *self)
 {
-    PyObject *str = PyObject_GetAttrString((PyObject*)self, name);
-
-    if (str == NULL) {
-        return -1;
+    if (self->_str_ucs1_mapping != NULL) {
+        return self->_str_ucs1_mapping;
     }
 
-    PyObject *bytes = PyUnicode_AsEncodedString(str, NULL, NULL);
-
-    Py_DECREF(str);
-
-    if (bytes == NULL) {
-        return -1;
-    }
-
-    *member = bytes;
-
-    return 0;
-}
-
-Py_LOCAL_INLINE(int)
-_populate_string_escapes(Encoder *self)
-{
-    int retval = -1;
+    /* Temporary references */
+    PyObject *user_string_escapes = NULL;
 
     /* Borrowed references */
     PyObject *key, *value;
 
-    /* Temporary references */
-    PyObject *key_bytes = NULL;
-    PyObject *value_bytes = NULL;
-    PyObject *user_string_escapes = PyObject_GetAttrString((PyObject*)self, "STRING_ESCAPES");
+    /* Kept references - dec on __del__ */
+    PyObject *value_bytes;
+
+    user_string_escapes = PyObject_GetAttrString((PyObject*)self, "STRING_ESCAPES");
     if (user_string_escapes == NULL) {
-        goto bail;
+        goto error;
     }
 
     if (!PyDict_Check(user_string_escapes)) {
         PyErr_Format(PyExc_TypeError, "STRING_ESCAPES: expected dict, got: %s", Py_TYPE(user_string_escapes)->tp_name);
-        goto bail;
+        goto error;
     }
 
-    /* Must decref on error. */
-    self->string_escapes = PyDict_New();
-    if (self->string_escapes == NULL) {
-        goto bail;
+    self->_str_ucs1_mapping = PyMem_Malloc(sizeof(Py_UCS1*) * 256);
+    if (self->_str_ucs1_mapping == NULL) {
+        goto error;
+    }
+
+    int i;
+    for (i = 0; i < 256; i++) {
+        self->_str_ucs1_mapping[i] = NULL;
     }
 
     Py_ssize_t pos = 0;
@@ -432,77 +456,66 @@ _populate_string_escapes(Encoder *self)
         if (!PyUnicode_Check(key) || !PyUnicode_Check(value)) {
             PyErr_Format(PyExc_TypeError, "STRING_ESCAPES: expected dict[str] -> str, got item (%s, %s)",
                          Py_TYPE(key)->tp_name, Py_TYPE(value)->tp_name);
-            goto bail;
+            goto error;
         }
 
-
-        key_bytes = PyUnicode_AsEncodedString(key, NULL, NULL);
-        if (key_bytes == NULL) {
-            goto bail;
+        if (PyUnicode_READY(key) == -1) {
+            goto error;
         }
 
-        if (PyBytes_GET_SIZE(key_bytes) != 1) {
-            PyErr_Format(PyExc_ValueError, "STRING_ESCAPES: keys must be single characters, got: %s",
-                         PyBytes_AS_STRING(key_bytes));
-            goto bail;
+        if (PyUnicode_KIND(key) != PyUnicode_1BYTE_KIND) {
+            /* TODO: test this path */
+            PyErr_Format(PyExc_TypeError, "STRING_ESCAPES: keys must be UCS1, got: %R", key);
+            goto error;
+        }
+
+        if (PyUnicode_GET_LENGTH(key) != 1) {
+            PyErr_Format(PyExc_TypeError, "STRING_ESCAPES: keys must exactly one character, got: %R", key);
+            goto error;
         }
 
         value_bytes = PyUnicode_AsEncodedString(value, NULL, NULL);
         if (value_bytes == NULL) {
-            goto bail;
+            goto error;
         }
 
+        Py_UCS1 offset = PyUnicode_1BYTE_DATA(key)[0];
 
-        if (PyDict_SetItem(self->string_escapes, key_bytes, value_bytes) == -1) {
-            goto bail;
-        }
-
-
-        Py_DECREF(key_bytes);
-        Py_DECREF(value_bytes);
+        self->_str_ucs1_mapping[offset] = value_bytes;
     }
 
-    retval = 0;
-
-  bail:
+    goto cleanup;
+  error:
+    _xfree_str_ucs1_mapping(self);
+  cleanup:
     Py_XDECREF(user_string_escapes);
-    Py_XDECREF(key_bytes);
-    Py_XDECREF(value_bytes);
-
-    if (retval == -1) {
-        Py_XDECREF(self->string_escapes);
-    }
-
-    return retval;
+    return self->_str_ucs1_mapping;
 }
 
-Py_LOCAL_INLINE(int)
-_populate_str_translation_table(Encoder *self)
+Py_LOCAL_INLINE(PyObject*)
+_get_str_translation_table(Encoder *self)
 {
-    PyObject *user_string_escapes = PyObject_GetAttrString((PyObject*)self, "STRING_ESCAPES");
-    if (user_string_escapes == NULL) {
-        return -1;
+    if (self->_str_translation_table == NULL) {
+        PyObject *user_string_escapes = PyObject_GetAttrString((PyObject*)self, "STRING_ESCAPES");
+        if (user_string_escapes == NULL) {
+            return NULL;
+        }
+
+        PyObject *s = PyUnicode_New(0, 127); //FromStringAndSize("", 0);
+        if (s == NULL) {
+            return NULL;
+        }
+
+        PyObject *maketrans = PyObject_GetAttrString(s, "maketrans");
+        Py_DECREF(s);
+        if (maketrans == NULL) {
+            return NULL;
+        }
+
+        self->_str_translation_table = PyObject_CallFunctionObjArgs(maketrans, user_string_escapes, NULL);
     }
 
-    PyObject *s = PyUnicode_New(0, 127); //FromStringAndSize("", 0);
-    if (s == NULL) {
-        return -1;
-    }
-
-    PyObject *maketrans = PyObject_GetAttrString(s, "maketrans");
-    Py_DECREF(s);
-    if (maketrans == NULL) {
-        return -1;
-    }
-
-    self->str_translation_table = PyObject_CallFunctionObjArgs(maketrans, user_string_escapes, NULL);
-
-
-    if (self->str_translation_table == NULL) {
-        return -1;
-    }
-
-    return 0;
+    return self->_str_translation_table;;
 }
 
 static int
@@ -513,49 +526,49 @@ _resize(Encoder *self)
 }
 
 Py_LOCAL_INLINE(int)
-_write_char(Encoder *self, const char c)
+_write_bytes_constant(Encoder *self, PyObject **member, const char *name)
 {
-    if (self->length == self->length_max) {
-        if (_resize(self) == -1) {
+    if (*member == NULL) {
+        PyObject *str = PyObject_GetAttrString((PyObject*)self, name);
+
+        if (str == NULL) {
             return -1;
         }
-    }
 
-    self->buffer[self->length++] = c;
+        PyObject *bytes = PyUnicode_AsEncodedString(str, NULL, NULL);
 
-    return 0;
-}
+        Py_DECREF(str);
 
-Py_LOCAL_INLINE(int)
-_write_const(Encoder *self, const char *c)
-{
-    if (self->length + strlen(c) >= self->length_max) {
-        if (_resize(self) == -1) {
+        if (bytes == NULL) {
             return -1;
         }
+
+        *member = bytes;
     }
 
-    strncpy(self->buffer, c, strlen(c));
-
-    self->length += strlen(c);
-
-    return 0;
+    return _write_bytes(self, *member);
 }
 
 Py_LOCAL_INLINE(int)
 _write_bytes(Encoder *self, PyObject *bytes)
 {
-    int length = PyBytes_GET_SIZE(bytes);
-    char *string = PyBytes_AS_STRING(bytes);
-
-    ENSURE_CAN_HOLD(length);
-
-    strncpy(&(self->buffer)[self->length], string, length);
-
-    self->length += length;
-
+    STRING(PyBytes_AS_STRING(bytes), PyBytes_GET_SIZE(bytes));
     return 0;
 }
+
+static void
+_xfree_str_ucs1_mapping(Encoder *self) {
+    if (self->_str_ucs1_mapping != NULL) {
+        int i;
+
+        for (i = 0; i < 256; i++) {
+            Py_XDECREF(self->_str_ucs1_mapping[i]);
+        }
+        PyMem_Free(self->_str_ucs1_mapping);
+
+        self->_str_ucs1_mapping = NULL;
+    }
+};
 
 /*
 static PyMethodDef Encoder_members[] = {
