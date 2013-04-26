@@ -1,8 +1,8 @@
 #include <Python.h>
 
-#define BUFFER_INITIAL_LENGTH 1000
-#define BUFFER_INCREMENT 1000
-#define BUFFER_MAX_LENGTH 100000
+#define BUFFER_INITIAL_LENGTH 1024
+#define BUFFER_INCREMENT 1024
+#define BUFFER_MAX_LENGTH 10240
 
 /* TODO: calc these instead of fudging. */
 
