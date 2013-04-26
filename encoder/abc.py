@@ -1,9 +1,9 @@
 from encoder import _abc
 
-class Encoder(_abc.Encoder):
-    class CannotEncode(Exception):
-        pass
+class CannotEncode(Exception):
+    pass
 
+class Encoder(_abc.Encoder):
     @property
     def NONE(self) -> str:
         raise CannotEncode(None)
@@ -15,6 +15,10 @@ class Encoder(_abc.Encoder):
     @property
     def BOOL_FALSE(self) -> str:
         raise CannotEncode(False)
+
+    @property
+    def DICT_PRESERVE_ORDER(self) -> bool:
+        return False
 
     @property
     def FLOAT_INFINITY(self) -> str:

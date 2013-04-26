@@ -8,6 +8,8 @@ class Encoder(abc.Encoder):
     FLOAT_NEGATIVE_INFINITY = '-Infinity'
     FLOAT_NAN = 'NaN'
 
+    DICT_PRESERVE_ORDER = True
+
     @property
     def STRING_ESCAPES(self):
         # See: json.encoder

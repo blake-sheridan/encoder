@@ -42,12 +42,16 @@ typedef struct {
     char *buffer;
     int length;
     int length_max;
+
     PyObject *none;
     PyObject *bool_true;
     PyObject *bool_false;
     PyObject *float_infinity;
     PyObject *float_negative_infinity;
     PyObject *float_nan;
+
+    int dict_preserve_order;
+
     PyObject *_str_translation_table;
     Py_UCS1 **_str_ucs1_mapping;
 } Encoder;
@@ -77,6 +81,7 @@ Py_LOCAL_INLINE(int) _append_str_naive(Encoder *self, PyObject *o, int length);
 Py_LOCAL_INLINE(int) _append_bytes(Encoder *self, PyObject *o);
 Py_LOCAL_INLINE(int) _append_dict(Encoder *self, PyObject *o);
 Py_LOCAL_INLINE(int) _append_fast_sequence(Encoder *self, PyObject *o);
+Py_LOCAL_INLINE(int) _append_mapping(Encoder *self, PyObject *o);
 
 Py_LOCAL_INLINE(PyObject*)  _get_str_translation_table(Encoder *self);
 Py_LOCAL_INLINE(Py_UCS1 **) _get_str_ucs1_mapping(Encoder *self);
@@ -111,6 +116,8 @@ __new__(PyTypeObject *type, PyObject *args, PyObject **kwargs)
     self->float_infinity = NULL;
     self->float_negative_infinity = NULL;
     self->float_nan = NULL;
+
+    self->dict_preserve_order = -1;
 
     self->_str_translation_table = NULL;
     self->_str_ucs1_mapping = NULL;
@@ -404,6 +411,25 @@ _append_dict(Encoder *self, PyObject *dict)
     PyObject *key;
     PyObject *value;
 
+
+    if (self->dict_preserve_order == -1) {
+        PyObject *user_dict_preserve_order = PyObject_GetAttrString((PyObject*)self, "DICT_PRESERVE_ORDER");
+        if (user_dict_preserve_order == NULL) {
+            return -1;
+        }
+        self->dict_preserve_order = PyObject_IsTrue(user_dict_preserve_order);
+
+        Py_DECREF(user_dict_preserve_order);
+
+        if (self->dict_preserve_order == -1) {
+            return -1;
+        }
+    }
+
+    if (!PyDict_CheckExact(dict) && self->dict_preserve_order == 1) {
+        return _append_mapping(self, dict);
+    }
+
     Py_ssize_t pos = 0; /* NOT incremental */
     int index = 0;
 
@@ -428,6 +454,47 @@ _append_dict(Encoder *self, PyObject *dict)
     } else {
         CHAR('}');
     }
+
+    return 0;
+}
+
+Py_LOCAL_INLINE(int)
+_append_mapping(Encoder *self, PyObject *mapping) {
+    PyObject *items = PyMapping_Items(mapping);
+
+    if (items == NULL) {
+        return -1;
+    }
+
+    int length = PySequence_Fast_GET_SIZE(items);
+
+    if (length == 0) {
+        STRING("{}", 2);
+    }
+    else {
+        /* Borrowed references */
+        PyObject *item;
+
+        int i;
+
+        CHAR('{');
+
+        for (i = 0; i < length; i++) {
+            if (i != 0) {
+                CHAR(',');
+            }
+
+            item = PyList_GET_ITEM(items, i);
+
+            _append(self, PyTuple_GET_ITEM(item, 0));
+            CHAR(':');
+            _append(self, PyTuple_GET_ITEM(item, 1));
+        }
+
+        CHAR('}');
+    }
+
+    Py_DECREF(items);
 
     return 0;
 }
