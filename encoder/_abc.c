@@ -52,11 +52,18 @@ typedef struct {
     Py_UCS1 **_str_ucs1_mapping;
 } Encoder;
 
-PyDoc_STRVAR(Encoder_doc,
-"TODO Encoder doc");
+PyDoc_STRVAR(Encoder___doc__,
+"TODO Encoder __doc__");
 
 static PyObject* encode(Encoder *self, PyObject *o);
+
+PyDoc_STRVAR(encode___doc__,
+"TODO encode __doc__");
+
 static PyObject* encode_bytes(Encoder *self, PyObject *o);
+
+PyDoc_STRVAR(encode_bytes___doc__,
+"TODO encode_bytes __doc__");
 
 static int _append(Encoder *self, PyObject *o);
 Py_LOCAL_INLINE(int) _append_int(Encoder *self, PyObject *o);
@@ -611,14 +618,9 @@ _xfree_str_ucs1_mapping(Encoder *self) {
     }
 };
 
-/*
-static PyMethodDef Encoder_members[] = {
-};
-*/
-
 static PyMethodDef Encoder_methods[] = {
-    {"encode",       (PyCFunction)encode,       METH_O, "Encode an object as a string"},
-    {"encode_bytes", (PyCFunction)encode_bytes, METH_O, "Encode an object as bytes"},
+    {"encode",         (PyCFunction)encode,         METH_O, encode___doc__},
+    {"encode_bytes",   (PyCFunction)encode_bytes,   METH_O, encode_bytes___doc__},
     {NULL} /* Sentinel */
 };
 
@@ -643,7 +645,7 @@ static PyTypeObject EncoderType = {
     0,                         /* tp_setattro */
     0,                         /* tp_as_buffer */
     Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,    /* tp_flags */
-    Encoder_doc,               /* tp_doc */
+    Encoder___doc__,           /* tp_doc */
     0,                         /* tp_traverse */
     0,                         /* tp_clear */
     0,                         /* tp_richcompare */
