@@ -7,7 +7,14 @@ setup(
     version = '1.0',
     description = 'Encode stuff',
     ext_modules = [
-        Extension('encoder._abc',
-                  sources = ['encoder/_abc.c']),
+        Extension(
+            name = '_encoder',
+            sources = [
+                'src/encoder.c',
+                ],
+            include_dirs = [
+                'include',
+                ],
+            ),
         ],
     )

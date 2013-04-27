@@ -741,7 +741,7 @@ static struct PyModuleDef encoder_module = {
 };
 
 PyMODINIT_FUNC
-PyInit__abc(void)
+PyInit__encoder(void)
 {
     if (PyType_Ready(&EncoderType) < 0) {
         return NULL;

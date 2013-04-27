@@ -1,9 +1,9 @@
-from encoder import _abc
+import _encoder
 
 class CannotEncode(Exception):
     pass
 
-class Encoder(_abc.Encoder):
+class Encoder(_encoder.Encoder):
     @property
     def NONE(self) -> str:
         raise CannotEncode(None)
