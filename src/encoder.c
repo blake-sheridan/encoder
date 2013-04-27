@@ -222,7 +222,7 @@ _append_str_1byte_kind(Encoder *self, PyObject *s, int slen)
 
         if (sub != NULL) {
             if (index_written == -1) {
-                CHAR(QUOTE);
+                CHAR('"');
 
                 if (i != 0) {
                     STRING((char *)data, i);
@@ -246,16 +246,16 @@ _append_str_1byte_kind(Encoder *self, PyObject *s, int slen)
         /* The best case, where no subs occured. */
         ENSURE_CAN_HOLD(slen + 2);
 
-        CHAR_UNSAFE(QUOTE);
+        CHAR_UNSAFE('"');
         STRING_UNSAFE((char *)data, slen);
-        CHAR_UNSAFE(QUOTE);
+        CHAR_UNSAFE('"');
     }
     else {
         if (index_written != slen - 1) {
             STRING(&data[index_written + 1], slen - index_written - 1);
         }
 
-        CHAR(QUOTE);
+        CHAR('"');
     }
 
     return 0;
@@ -298,13 +298,13 @@ _append_str_naive(Encoder *self, PyObject *s, int length)
         goto bail;
     }
 
-    CHAR(QUOTE);
+    CHAR('"');
 
     if (_write_bytes(self, translated_bytes) == -1) {
         goto bail;
     }
 
-    CHAR(QUOTE);
+    CHAR('"');
 
     retval = 0;
 

@@ -9,8 +9,6 @@
 #define SPRINTF_MAX_LONG_LONG_LENGTH 31
 #define SPRINTF_MAX_DOUBLE_LENGTH 51
 
-const char QUOTE = '"';
-
 /* These macros must be used with Encoder `self` in scope and ASSUME length has been checked. */
 
 #define CHAR_UNSAFE(__char)                            \
