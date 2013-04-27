@@ -11,6 +11,7 @@ setup(
             name = '_encoder',
             sources = [
                 'src/encoder.c',
+                'src/module.c',
                 ],
             include_dirs = [
                 'include',

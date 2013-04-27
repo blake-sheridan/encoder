@@ -2,7 +2,7 @@
 
 #include "encoder.h"
 
-PyDoc_STRVAR(Encoder___doc__,
+PyDoc_STRVAR(__doc__,
 "TODO Encoder __doc__");
 
 PyDoc_STRVAR(encode___doc__,
@@ -602,13 +602,13 @@ _xfree_str_ucs1_mapping(Encoder *self) {
     }
 };
 
-static PyMethodDef Encoder_methods[] = {
+static PyMethodDef methods[] = {
     {"encode",         (PyCFunction)encode,         METH_O, encode___doc__},
     {"encode_bytes",   (PyCFunction)encode_bytes,   METH_O, encode_bytes___doc__},
     {NULL} /* Sentinel */
 };
 
-static PyTypeObject EncoderType = {
+PyTypeObject EncoderType = {
     PyVarObject_HEAD_INIT(NULL, 0)
     "encoder.Encoder",         /* tp_name */
     sizeof(Encoder),           /* tp_basicsize */
@@ -629,14 +629,14 @@ static PyTypeObject EncoderType = {
     0,                         /* tp_setattro */
     0,                         /* tp_as_buffer */
     Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,    /* tp_flags */
-    Encoder___doc__,           /* tp_doc */
+    __doc__,                   /* tp_doc */
     0,                         /* tp_traverse */
     0,                         /* tp_clear */
     0,                         /* tp_richcompare */
     0,                         /* tp_weaklistoffset */
     0,                         /* tp_iter */
     0,                         /* tp_iternext */
-    Encoder_methods,           /* tp_methods */
+    methods,                   /* tp_methods */
     0,                         /* tp_members */
     0,                         /* tp_getset */
     0,                         /* tp_base */
@@ -647,30 +647,4 @@ static PyTypeObject EncoderType = {
     0,                         /* tp_init */
     0,                         /* tp_alloc */
     __new__,                   /* tp_new */
-};
-
-static struct PyModuleDef encoder_module = {
-    PyModuleDef_HEAD_INIT,
-    "_encoder",
-    "todo module doc",
-    -1,
-    Encoder_methods
-};
-
-PyMODINIT_FUNC
-PyInit__encoder(void)
-{
-    if (PyType_Ready(&EncoderType) < 0) {
-        return NULL;
-    }
-
-    PyObject *module = PyModule_Create(&encoder_module);
-    if (module == NULL) {
-        return NULL;
-    }
-
-    Py_INCREF(&EncoderType);
-    PyModule_AddObject(module, "Encoder", (PyObject *)&EncoderType);
-
-    return module;
 };
