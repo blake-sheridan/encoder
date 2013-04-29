@@ -1,5 +1,6 @@
 #include <Python.h>
 
+#include "buffer.h"
 #include "encoder.h"
 
 PyDoc_STRVAR(__doc__,
@@ -11,6 +12,9 @@ PyDoc_STRVAR(encode___doc__,
 PyDoc_STRVAR(encode_bytes___doc__,
 "TODO encode_bytes __doc__");
 
+/* Forward declarations */
+Py_LOCAL_INLINE(int) _append_bytes_constant(Encoder *self, PyObject **member, const char *attribute_name);
+
 static PyObject *
 __new__(PyTypeObject *type, PyObject *args, PyObject **kwargs)
 {
@@ -19,13 +23,10 @@ __new__(PyTypeObject *type, PyObject *args, PyObject **kwargs)
         return NULL;
     }
 
-    self->buffer = PyMem_Malloc(BUFFER_INITIAL_LENGTH);
+    self->buffer = new_buffer();
     if (self->buffer == NULL) {
         return NULL;
     }
-
-    self->length = 0;
-    self->length_max = BUFFER_INITIAL_LENGTH;
 
     self->none = NULL;
     self->bool_true = NULL;
@@ -45,7 +46,7 @@ __new__(PyTypeObject *type, PyObject *args, PyObject **kwargs)
 static void
 __del__(Encoder* self)
 {
-    PyMem_Free(self->buffer);
+    delete_buffer(self->buffer);
 
     Py_XDECREF(self->none);
     Py_XDECREF(self->bool_true);
@@ -75,7 +76,9 @@ encode(Encoder* self, PyObject *o)
 static PyObject*
 encode_bytes(Encoder *self, PyObject *o)
 {
-    if (self->length != 0) {
+    /* FIXME: _index */
+
+    if (self->buffer->_index != 0) {
         PyErr_SetString(PyExc_RuntimeError, "encode while encode already in progress");
         return NULL;
     }
@@ -83,10 +86,10 @@ encode_bytes(Encoder *self, PyObject *o)
     PyObject *retval = NULL;
 
     if (_append(self, o) != -1) {
-        retval = PyBytes_FromStringAndSize(self->buffer, self->length);
+        retval = Buffer_as_bytes(self->buffer);
     }
 
-    self->length = 0;
+    self->buffer->_index = 0;
 
     return retval;
 }
@@ -95,13 +98,13 @@ static int
 _append(Encoder *self, PyObject *o)
 {
     if (o == Py_None) {
-        return _write_bytes_constant(self, &self->none, "NONE");
+        return _append_bytes_constant(self, &self->none, "NONE");
     }
     if (o == Py_True) {
-        return _write_bytes_constant(self, &self->bool_true, "BOOL_TRUE");
+        return _append_bytes_constant(self, &self->bool_true, "BOOL_TRUE");
     }
     if (o == Py_False) {
-        return _write_bytes_constant(self, &self->bool_false, "BOOL_FALSE");
+        return _append_bytes_constant(self, &self->bool_false, "BOOL_FALSE");
     }
     if (PyLong_Check(o)) {
         return _append_int(self, o);
@@ -139,40 +142,13 @@ _append_int(Encoder *self, PyObject *integer)
         return -1;
     }
 
-    ENSURE_CAN_HOLD(SPRINTF_MAX_LONG_LONG_LENGTH);
-
-    int num_chars = sprintf(&self->buffer[self->length], "%Ld", as_long);
-    if (num_chars < 0) {
-        PyErr_SetString(PyExc_RuntimeError, "failure from sprintf on int");
-        return -1;
-    }
-
-    self->length += num_chars;
-
-    return 0;
+    return append_longlong(self->buffer, as_long);
 }
 
 Py_LOCAL_INLINE(int)
 _append_float(Encoder *self, PyObject *f)
 {
-    double as_double = PyFloat_AS_DOUBLE(f);
-
-    ENSURE_CAN_HOLD(SPRINTF_MAX_DOUBLE_LENGTH);
-
-    int num_chars = sprintf(&self->buffer[self->length], "%f", as_double);
-    if (num_chars < 0) {
-        PyErr_SetString(PyExc_RuntimeError, "failure from sprintf on float");
-        return -1;
-    }
-
-    self->length += num_chars;
-
-    /* Trim trailing 0's - does not seem to be way to tell sprintf to do so. */
-    while (self->buffer[self->length - 1] == '0') {
-        self->length--;
-    }
-
-    return 0;
+    return append_double(self->buffer, PyFloat_AS_DOUBLE(f));
 }
 
 Py_LOCAL_INLINE(int)
@@ -185,8 +161,7 @@ _append_str(Encoder *self, PyObject *s)
     Py_ssize_t length = PyUnicode_GET_LENGTH(s);
 
     if (length == 0) {
-        STRING("\"\"", 2);
-        return 0;
+        return append_string(self->buffer, "\"\"", 2);
     }
 
     switch (PyUnicode_KIND(s)) {
@@ -222,19 +197,25 @@ _append_str_1byte_kind(Encoder *self, PyObject *s, int slen)
 
         if (sub != NULL) {
             if (index_written == -1) {
-                CHAR('"');
+                if (append_char(self->buffer, '"') == -1) {
+                    return -1;
+                }
 
                 if (i != 0) {
-                    STRING((char *)data, i);
+                    if (append_string(self->buffer, (char *)data, i) == -1) {
+                        return -1;
+                    }
                 }
             }
             else {
                 if (i != 0) {
-                    STRING(&data[index_written + 1], i - index_written);
+                    if (append_string(self->buffer, &data[index_written + 1], i - index_written) == -1) {
+                        return -1;
+                    }
                 }
             }
 
-            if (_write_bytes(self, sub) == -1) {
+            if (append_bytes(self->buffer, sub) == -1) {
                 return -1;
             }
 
@@ -244,18 +225,24 @@ _append_str_1byte_kind(Encoder *self, PyObject *s, int slen)
 
     if (index_written == -1) {
         /* The best case, where no subs occured. */
-        ENSURE_CAN_HOLD(slen + 2);
+        if (ensure_room(self->buffer, slen + 2) == -1) {
+            return -1;
+        }
 
-        CHAR_UNSAFE('"');
-        STRING_UNSAFE((char *)data, slen);
-        CHAR_UNSAFE('"');
+        append_char_unsafe(self->buffer, '"');
+        append_string_unsafe(self->buffer, (char *)data, slen);
+        append_char_unsafe(self->buffer, '"');
     }
     else {
         if (index_written != slen - 1) {
-            STRING(&data[index_written + 1], slen - index_written - 1);
+            if (append_string(self->buffer, &data[index_written + 1], slen - index_written - 1) == -1) {
+                return -1;
+            }
         }
 
-        CHAR('"');
+        if (append_char(self->buffer, '"') == -1) {
+            return -1;
+        }
     }
 
     return 0;
@@ -298,13 +285,17 @@ _append_str_naive(Encoder *self, PyObject *s, int length)
         goto bail;
     }
 
-    CHAR('"');
-
-    if (_write_bytes(self, translated_bytes) == -1) {
+    if (append_char(self->buffer, '"') == -1) {
         goto bail;
     }
 
-    CHAR('"');
+    if (append_bytes(self->buffer, translated_bytes) == -1) {
+        goto bail;
+    }
+
+    if (append_char(self->buffer, '"') == -1) {
+        goto bail;
+    }
 
     retval = 0;
 
@@ -325,22 +316,24 @@ _append_bytes(Encoder *self, PyObject *bytes)
 Py_LOCAL_INLINE(int)
 _append_dict(Encoder *self, PyObject *dict)
 {
+    int retval = -1;
+
+    Buffer *b = self->buffer;
+
     PyObject *key;
     PyObject *value;
 
-
     if (self->dict_preserve_order == -1) {
         PyObject *user_dict_preserve_order = PyObject_GetAttrString((PyObject*)self, "DICT_PRESERVE_ORDER");
-        if (user_dict_preserve_order == NULL) {
-            return -1;
-        }
+        if (user_dict_preserve_order == NULL)
+            goto bail;
+
         self->dict_preserve_order = PyObject_IsTrue(user_dict_preserve_order);
 
         Py_DECREF(user_dict_preserve_order);
 
-        if (self->dict_preserve_order == -1) {
-            return -1;
-        }
+        if (self->dict_preserve_order == -1)
+            goto bail;
     }
 
     if (!PyDict_CheckExact(dict) && self->dict_preserve_order == 1) {
@@ -351,42 +344,49 @@ _append_dict(Encoder *self, PyObject *dict)
     int index = 0;
 
     while (PyDict_Next(dict, &pos, &key, &value)) {
-        if (index == 0) {
-            CHAR('{');
-        }
-        else {
-            CHAR(',');
-        }
+        if (append_char(b, (index == 0 ? '{' : ',')) == -1)
+            goto bail;
 
-        _append(self, key);
-        CHAR(':');
-        _append(self, value);
+        if (_append(self, key) == -1)
+            goto bail;
+
+        if (append_char(b, ':') == -1)
+            goto bail;
+
+        if (_append(self, value) == -1)
+            goto bail;
 
         index++;
     }
 
     if (index == 0) {
         /* Empty. */
-        STRING("{}", 2);
+        if (append_string(b, "{}", 2) == -1)
+            goto bail;
     } else {
-        CHAR('}');
+        if (append_char(b, '}') == -1)
+            goto bail;
     }
 
-    return 0;
+    retval = 0;
+  bail:
+    return retval;
 }
 
 Py_LOCAL_INLINE(int)
 _append_mapping(Encoder *self, PyObject *mapping) {
+    int retval = -1;
+    Buffer *b = self->buffer;
     PyObject *items = PyMapping_Items(mapping);
 
-    if (items == NULL) {
-        return -1;
-    }
+    if (items == NULL)
+        goto bail;
 
     int length = PySequence_Fast_GET_SIZE(items);
 
     if (length == 0) {
-        STRING("{}", 2);
+        if (append_string(b, "{}", 2) == -1)
+            goto bail;
     }
     else {
         /* Borrowed references */
@@ -394,55 +394,73 @@ _append_mapping(Encoder *self, PyObject *mapping) {
 
         int i;
 
-        CHAR('{');
+        if (append_char(b, '{') == -1)
+            goto bail;
 
         for (i = 0; i < length; i++) {
-            if (i != 0) {
-                CHAR(',');
-            }
+            if (i != 0)
+                if (append_char(b, ',') == -1)
+                    goto bail;
 
             item = PyList_GET_ITEM(items, i);
 
-            _append(self, PyTuple_GET_ITEM(item, 0));
-            CHAR(':');
-            _append(self, PyTuple_GET_ITEM(item, 1));
+            if (_append(self, PyTuple_GET_ITEM(item, 0)) == -1)
+                goto bail;
+
+            if (append_char(b, ':') == -1)
+                goto bail;
+
+            if (_append(self, PyTuple_GET_ITEM(item, 1)) == -1)
+                goto bail;
+
         }
 
-        CHAR('}');
+        if (append_char(b, '}') == -1)
+            goto bail;
     }
 
-    Py_DECREF(items);
-
-    return 0;
+    retval = 0;
+  bail:
+    Py_XDECREF(items);
+    return retval;
 }
 
 Py_LOCAL_INLINE(int)
 _append_fast_sequence(Encoder *self, PyObject *sequence)
 {
+    Buffer *b = self->buffer;
+
+    int retval = -1;
     /* XXX: must be list/tuple, using the assumption macros */
     int length = PySequence_Fast_GET_SIZE(sequence);
 
     if (length == 0) {
-        STRING("[]", 2);
+        if (append_string(b, "[]", 2) == -1)
+            goto bail;
     }
     else {
-        PyObject **items = PySequence_Fast_ITEMS(sequence);
+        if (append_char(b, '[') == -1)
+            goto bail;
 
+        PyObject **items = PySequence_Fast_ITEMS(sequence);
         int i;
 
-        CHAR('[');
-
         for (i = 0; i < length; i++) {
-            if (i != 0) {
-                CHAR(',');
-            }
-            _append(self, items[i]);
+            if (i != 0)
+                if (append_char(b, ',') == -1)
+                    goto bail;
+
+            if (_append(self, items[i]) == -1)
+                goto bail;
         }
 
-        CHAR(']');
+        if (append_char(b, ']') == -1)
+            goto bail;
     }
 
-    return 0;
+    retval = 0;
+  bail:
+    return retval;
 }
 
 
@@ -550,24 +568,20 @@ _get_str_translation_table(Encoder *self)
     return self->_str_translation_table;;
 }
 
-static int
-_resize(Encoder *self)
-{
-    PyErr_SetString(PyExc_NotImplementedError, "resizing internal buffer");
-    return -1;
-}
-
 Py_LOCAL_INLINE(int)
-_write_bytes_constant(Encoder *self, PyObject **member, const char *name)
+_append_bytes_constant(Encoder *self, PyObject **member, const char *name)
 {
-    if (*member == NULL) {
+    PyObject *bytes = *member;
+
+    if (bytes == NULL) {
         PyObject *str = PyObject_GetAttrString((PyObject*)self, name);
 
         if (str == NULL) {
             return -1;
         }
 
-        PyObject *bytes = PyUnicode_AsEncodedString(str, NULL, NULL);
+
+        bytes = PyUnicode_AsEncodedString(str, NULL, NULL);
 
         Py_DECREF(str);
 
@@ -578,14 +592,7 @@ _write_bytes_constant(Encoder *self, PyObject **member, const char *name)
         *member = bytes;
     }
 
-    return _write_bytes(self, *member);
-}
-
-Py_LOCAL_INLINE(int)
-_write_bytes(Encoder *self, PyObject *bytes)
-{
-    STRING(PyBytes_AS_STRING(bytes), PyBytes_GET_SIZE(bytes));
-    return 0;
+    return append_bytes(self->buffer, bytes);
 }
 
 static void
