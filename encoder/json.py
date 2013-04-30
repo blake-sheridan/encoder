@@ -2,11 +2,11 @@ from . import abc
 
 class Encoder(abc.Encoder):
     NONE = 'null'
-    BOOL_TRUE = 'true'
-    BOOL_FALSE = 'false'
-    FLOAT_INFINITY = 'Infinity'
-    FLOAT_NEGATIVE_INFINITY = '-Infinity'
-    FLOAT_NAN = 'NaN'
+    TRUE = 'true'
+    FALSE = 'false'
+    INFINITY = 'Infinity'
+    NEGATIVE_INFINITY = '-Infinity'
+    NAN = 'NaN'
 
     DICT_PRESERVE_ORDER = True
 

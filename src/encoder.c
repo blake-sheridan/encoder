@@ -101,10 +101,10 @@ _append(Encoder *self, PyObject *o)
         return _append_bytes_constant(self, &self->none, "NONE");
     }
     if (o == Py_True) {
-        return _append_bytes_constant(self, &self->bool_true, "BOOL_TRUE");
+        return _append_bytes_constant(self, &self->bool_true, "TRUE");
     }
     if (o == Py_False) {
-        return _append_bytes_constant(self, &self->bool_false, "BOOL_FALSE");
+        return _append_bytes_constant(self, &self->bool_false, "FALSE");
     }
     if (PyLong_Check(o)) {
         return _append_int(self, o);

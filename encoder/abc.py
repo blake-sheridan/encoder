@@ -9,11 +9,11 @@ class Encoder(_encoder.Encoder):
         raise CannotEncode(None)
 
     @property
-    def BOOL_TRUE(self) -> str:
+    def TRUE(self) -> str:
         raise CannotEncode(True)
 
     @property
-    def BOOL_FALSE(self) -> str:
+    def FALSE(self) -> str:
         raise CannotEncode(False)
 
     @property
@@ -21,15 +21,15 @@ class Encoder(_encoder.Encoder):
         return False
 
     @property
-    def FLOAT_INFINITY(self) -> str:
+    def INFINITY(self) -> str:
         raise CannotEncode(float('inf'))
 
     @property
-    def FLOAT_NEGATIVE_INFINITY(self) -> str:
+    def NEGATIVE_INFINITY(self) -> str:
         raise CannotEncode(float('-inf'))
 
     @property
-    def FLOAT_NAN(self) -> str:
+    def NAN(self) -> str:
         raise CannotEncode(float('nan'))
 
     @property
