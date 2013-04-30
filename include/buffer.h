@@ -22,7 +22,7 @@ Py_LOCAL_INLINE(int) append_string   (Buffer *self, char *string, int length);
 Py_LOCAL_INLINE(void) append_char_unsafe   (Buffer *self, const char c);
 Py_LOCAL_INLINE(void) append_string_unsafe (Buffer *self, char *string, int length);
 
-static PyObject* Buffer_as_bytes (Buffer *self);
+Py_LOCAL_INLINE(PyObject*) Buffer_as_bytes (Buffer *self);
 
 /***************************
  * Internal Implementation *
@@ -172,8 +172,7 @@ append_string_unsafe(Buffer *self, char *string, int length)
     self->_index += length;
 }
 
-//Py_LOCAL_INLINE(PyObject*)
-static PyObject *
+Py_LOCAL_INLINE(PyObject*)
 Buffer_as_bytes(Buffer *self) {
     return PyBytes_FromStringAndSize(self->_data, self->_index);
 }
