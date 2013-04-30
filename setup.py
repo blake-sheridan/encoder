@@ -16,6 +16,9 @@ setup(
             include_dirs = [
                 'include',
                 ],
+            depends = [
+                'include/buffer.h', # As this is essentially a source file
+                ],
             ),
         ],
     )
