@@ -3,6 +3,8 @@
 
 #include "buffer.h"
 
+extern PyTypeObject Encoder_Type;
+
 typedef struct {
     PyObject_HEAD
 

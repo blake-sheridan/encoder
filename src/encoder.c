@@ -615,7 +615,7 @@ static PyMethodDef methods[] = {
     {NULL} /* Sentinel */
 };
 
-PyTypeObject EncoderType = {
+PyTypeObject Encoder_Type = {
     PyVarObject_HEAD_INIT(NULL, 0)
     "encoder.Encoder",         /* tp_name */
     sizeof(Encoder),           /* tp_basicsize */

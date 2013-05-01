@@ -1,6 +1,6 @@
 #include <Python.h>
 
-extern PyTypeObject EncoderType;
+extern PyTypeObject Encoder_Type;
 
 PyDoc_STRVAR(__doc__,
 "TODO module __doc__");
@@ -15,7 +15,7 @@ static struct PyModuleDef Module = {
 PyMODINIT_FUNC
 PyInit__encoder(void)
 {
-    if (PyType_Ready(&EncoderType) < 0) {
+    if (PyType_Ready(&Encoder_Type) < 0) {
         return NULL;
     }
 
@@ -24,8 +24,8 @@ PyInit__encoder(void)
         return NULL;
     }
 
-    Py_INCREF(&EncoderType);
-    PyModule_AddObject(module, "Encoder", (PyObject *)&EncoderType);
+    Py_INCREF(&Encoder_Type);
+    PyModule_AddObject(module, "Encoder", (PyObject *)&Encoder_Type);
 
     return module;
 };
