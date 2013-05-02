@@ -10,6 +10,7 @@ setup(
         Extension(
             name = '_encoder',
             sources = [
+                'src/buffer.c',
                 'src/encoder.c',
                 'src/module.c',
                 'src/xml.c',

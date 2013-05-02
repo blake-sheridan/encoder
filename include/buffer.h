@@ -8,8 +8,8 @@ typedef struct {
 } Buffer;
 
 /* Prototypes */
-static Buffer* new_buffer(void);
-static void delete_buffer(Buffer *buffer);
+Buffer* new_buffer(void);
+void delete_buffer(Buffer *buffer);
 
 Py_LOCAL_INLINE(int) ensure_room     (Buffer *self, int length);
 
@@ -28,41 +28,11 @@ Py_LOCAL_INLINE(PyObject*) Buffer_as_bytes (Buffer *self);
  * Internal Implementation *
  ***************************/
 
-#define _BUFFER_SIZE_INITIAL 1024
-#define _BUFFER_SIZE_INCREMENT 1024
-#define _BUFFER_SIZE_MAX 10240
-
 /* TODO: calc these instead of fudging. */
 #define _SPRINTF_MAX_LONG_LONG_LENGTH 31
 #define _SPRINTF_MAX_DOUBLE_LENGTH 51
 
-/* Prototypes */
-static int _Buffer_resize(Buffer *self);
-
-static Buffer* new_buffer()
-{
-    Buffer *buffer = NULL;
-    char *data = PyMem_Malloc(_BUFFER_SIZE_INITIAL);
-
-    if (data != NULL) {
-        buffer = PyMem_Malloc(sizeof(Buffer));
-        if (buffer == NULL) {
-            /* XXX: free data? */
-        }
-        else {
-            buffer->_data = data;
-            buffer->_index = 0;
-            buffer->_size = _BUFFER_SIZE_INITIAL;
-        }
-    }
-
-    return buffer;
-}
-
-static void delete_buffer(Buffer *buffer)
-{
-    PyMem_Free(buffer->_data);
-}
+int _Buffer_resize(Buffer *self);
 
 Py_LOCAL_INLINE(int)
 ensure_room(Buffer *self, int length)
@@ -175,13 +145,6 @@ append_string_unsafe(Buffer *self, char *string, int length)
 Py_LOCAL_INLINE(PyObject*)
 Buffer_as_bytes(Buffer *self) {
     return PyBytes_FromStringAndSize(self->_data, self->_index);
-}
-
-static int
-_Buffer_resize(Buffer *self)
-{
-    PyErr_SetString(PyExc_NotImplementedError, "resizing internal buffer");
-    return -1;
 }
 
 #endif
