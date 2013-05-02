@@ -156,8 +156,60 @@ _append(Encoder *self, PyObject *o)
         return _append_dict(self, o);
     }
 
-    PyErr_Format(PyExc_TypeError, "Do not know how to encode %s", o->ob_type->tp_name);
-    return -1;
+    PyObject *o_class = PyObject_Type(o);
+    PyObject *iterencode = PyObject_CallMethodObjArgs((PyObject*)self, PyUnicode_FromString("make_iterencode"), o_class, NULL);
+    PyObject *iterable = NULL;
+
+    Py_DECREF(o_class);
+    if (iterencode == NULL) {
+        return -1;
+    }
+
+    if (PyCallable_Check(iterencode) == 1) {
+        iterable = PyObject_CallFunctionObjArgs(iterencode, o, NULL);
+        if (iterable == NULL) {
+            return -1;
+        }
+
+    }
+    else if (PyTuple_Check(iterencode)) {
+        PyObject *callable = PyTuple_GET_ITEM(iterencode, 0);
+
+        Py_INCREF(o); /* XXX: PyTuple_SetItem steals a reference */
+        PyTuple_SetItem(iterencode, 0, o);
+
+        iterable = PyObject_CallObject(callable, iterencode);
+        if (iterable == NULL) {
+            return -1;
+        }
+    }
+    else {
+        PyErr_Format(PyExc_TypeError, "make_iterencode(%R): must return a callable/tuple, got: %R", o->ob_type, iterencode);
+        return -1;
+    }
+
+    if (!PyIter_Check(iterable)) {
+        PyErr_Format(PyExc_TypeError, "%R: must return an iterable", iterencode);
+        return -1;
+    }
+
+    PyObject *item;
+
+    while ((item = PyIter_Next(iterable))) {
+        if (_append(self, item) == -1) {
+            Py_DECREF(item);
+            break;
+        }
+        Py_DECREF(item);
+    }
+
+    Py_DECREF(iterable);
+
+    if (PyErr_Occurred()) {
+        return -1;
+    }
+
+    return 0;
 }
 
 Py_LOCAL_INLINE(int)

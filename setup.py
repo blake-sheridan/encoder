@@ -12,6 +12,7 @@ setup(
             sources = [
                 'src/encoder.c',
                 'src/module.c',
+                'src/xml.c',
                 ],
             include_dirs = [
                 'include',

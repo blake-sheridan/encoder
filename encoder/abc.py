@@ -35,3 +35,6 @@ class Encoder(_encoder.Encoder):
     @property
     def STRING_ESCAPES(self) -> (dict, str, str):
         raise NotImplementedError
+
+    def make_iterencode(self, type:type):
+        raise CannotEncode(type)
